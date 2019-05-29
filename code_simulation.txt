@@ -1,0 +1,305 @@
+globals
+[
+ ;; parameters and global variables for the hexagonal packing:
+  x-hex
+  y-hex
+  i-hex
+  j-hex
+  spacingx
+  spacingy
+  y-offset
+
+  steps
+  number-dead
+  number-alive   ;; for calculating mortality
+  size-factor    ;; depending on the grid size, take care of the sizes of individuals
+
+]
+
+turtles-own
+[
+  a            ;; a constant of growth function, intrinsic growth rate of mass
+  B            ;; body biomass
+  Bmax         ;; maximum biomass (asymptotic biomass)
+
+  Ae     ;; effective area
+  Af     ;; positive area of effect
+  rad    ;; radius
+
+  f-c    ;; Index for Competition
+
+  Bo           ;; optimal biomass (without interaction and with stress)
+
+  plant-dead   ;; plants with gr of 0 will have this value true
+]
+
+patches-own
+[
+  nb-compete     ;; sharing of competition
+  nb-facilitate  ;; sharing of facilitation
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;  initialization of plants  ;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to plant-setting
+    set Bmax random-normal 2000000 200000
+    set B random-normal 2 0.2
+    set a random-normal 3 0.3
+
+    set Bo B
+
+    set rad ( B ^ ( 3 / 8 ) ) * ( PI ^ ( -1 / 2 ) )
+    set Ae B ^ ( 3 / 4 )
+
+    set plant-dead false
+
+    set size rad * size-factor * 2
+    set color scale-color lime  size (size-factor * 0.1) (size-factor * 3.5)
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;  setup  ;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup
+
+  __clear-all-and-reset-ticks
+
+  random-seed randomseed
+
+  set-default-shape turtles "circle 3"
+
+  ask patches
+  [
+     set pcolor white
+     set nb-compete 0
+     set nb-facilitate 0
+  ]
+
+  set size-factor ( world-width / 100)
+
+  if organization = "regularity"
+  [
+     set j-hex factor initial_density
+     set i-hex initial_density / (2 * j-hex)
+     set spacingx world-width / (2 * i-hex)
+     set spacingy world-height / (2 * j-hex)
+     set x-hex spacingx / 2
+     set y-hex spacingy / 2
+     set y-offset spacingy / 2
+  ]
+
+  ifelse organization = "aggregation"
+  [ ask n-of 6 patches
+     [
+       sprout initial_density / 6
+         [
+           plant-setting
+
+           left random 360
+           forward random (size-factor * cluster_scale) ; or one can also use - forward random-normal 0 (size-factor * cluster_scale / 4)
+         ]
+     ]
+     crt (initial_density - count turtles) [ plant-setting
+                                             setxy random-xcor random-ycor ]
+  ]
+  [
+    crt initial_density ; initial density is 300 individuals in Lin et al., 2012. Why? THIS IS SPARTA!
+     [
+       plant-setting
+
+       if organization = "regularity"
+       [ hexagonal ]
+
+       if organization = "randomness"
+       [ setxy random-xcor random-ycor ]
+     ]
+  ]
+
+
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;  runtime  ;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to go
+
+  set number-dead 0
+  set number-alive count turtles  ;; variable for calculating mortality
+  if not any? turtles [ stop ]
+
+;; modes of competition
+  if competition = "off"
+  [
+    ask turtles [ set f-c 1
+                  set Ae ( B ^ ( 3 / 4 ) ) ]
+  ]
+
+
+  if competition = "size symmetry"
+  [
+    ask patches [set nb-compete 0]
+    ask turtles [ask patches in-radius (rad * size-factor) [ set nb-compete nb-compete + [B] of myself ]]
+    ask patches with [nb-compete > 0] [set nb-compete 1 / nb-compete]
+    ask turtles [ let nbtot-compete (count patches in-radius (rad * size-factor) )
+                  let nbsh-compete  (sum ([nb-compete * [B] of myself] of patches in-radius (rad * size-factor)))
+                  set f-c nbsh-compete / nbtot-compete
+                  set Ae ( B ^ ( 3 / 4 ) ) * f-c ]
+  ]
+
+  if competition = "allometric asymmetry"
+  [
+    ask patches [set nb-compete 0]
+    ask turtles [ask patches in-radius (rad * size-factor) [ set nb-compete nb-compete + [B ^ 2] of myself ]]
+    ask patches with [nb-compete > 0] [set nb-compete 1 / nb-compete]
+    ask turtles [ let nbtot-compete (count patches in-radius (rad * size-factor) )
+                  let nbsh-compete  (sum ([nb-compete * [B ^ 2] of myself] of patches in-radius (rad * size-factor)))
+                  set f-c nbsh-compete / nbtot-compete
+                  set Ae ( B ^ ( 3 / 4 ) ) * f-c ]
+  ]
+
+
+
+;; modes of facilitation
+  if facilitation = "off"
+  [ ask turtles [ set Af 0 ] ]
+
+
+  if facilitation = "size symmetry"
+  [
+    ask patches [ set nb-facilitate 0 ]
+    ask turtles [ ask patches in-radius (rad * size-factor) [ set nb-facilitate nb-facilitate + [B] of myself ] ]
+    ask patches with [ nb-facilitate > 0 ] [ set nb-facilitate 1 / nb-facilitate ]
+    ask turtles [ let nbtot-facilitate (count patches in-radius (rad * size-factor) )
+                  let nbsh-facilitate  (sum ([nb-facilitate * [B] of myself] of patches in-radius (rad * size-factor)))
+                  set Af ( B ^ ( 3 / 4 ) ) * (1 - (nbsh-facilitate / nbtot-facilitate))]
+  ]
+
+  if facilitation = "allometric asymmetry"
+  [
+    ask patches [ set nb-facilitate 0 ]
+    ask turtles [ ask patches in-radius (rad * size-factor) [ set nb-facilitate nb-facilitate + [B ^ 2] of myself ] ]
+    ask patches with [ nb-facilitate > 0 ] [ set nb-facilitate 1 / nb-facilitate ]
+    ask turtles [ let nbtot-facilitate (count patches in-radius (rad * size-factor) )
+                  let nbsh-facilitate  (sum ([nb-facilitate * [B ^ 2] of myself] of patches in-radius (rad * size-factor)))
+                  set Af ( B ^ ( 3 / 4 ) ) * (1 - (nbsh-facilitate / nbtot-facilitate))]
+  ]
+
+
+
+;; grow or perish, that is a question
+  ask turtles with [plant-dead = false] [growth]
+  ask turtles with [plant-dead = true] [Remove_dead_plant]
+
+  set steps steps + 1
+
+  tick
+
+;; plotting
+  auto-plot-on
+
+;; biomass
+ set-current-plot "Mean biomass through time"
+  if count turtles > 1
+  [
+      set-current-plot-pen "Mean"
+      plotxy (ticks + 1) mean [B] of turtles
+  ]
+
+;; Relative Interaction Index
+  set-current-plot "Relative Interaction Intensity"
+  if count turtles > 0
+  [
+      set-current-plot-pen "0"
+      plotxy (ticks + 1) 0
+      set-current-plot-pen "RII"
+      plotxy (ticks + 1) (mean [B] of turtles - mean [Bo] of turtles) / (mean [B] of turtles + mean [Bo] of turtles)
+
+  ]
+
+
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;  growth  ;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;
+
+to growth
+
+  let f-s 1 - stress
+  let f-f 1 - (Af / (B ^ 0.75)) ;; Index for facilitation
+  let Atot (B ^ 0.75)
+  ifelse f-c <= 0
+  [ set plant-dead true ]
+  [
+      ifelse stress >= 1
+    [ set Bo 0 ]
+    [ let Bo-gr a * (Bo ^ 0.75)  * (f-s - (Bo / Bmax) ^ 0.25)   ;; optimal growth without neighbors and with stress
+      set Bo Bo + Bo-gr
+    ]
+
+   ;; actual growth rate
+    let gr a * B ^ 0.75 * (f-c * (1 - stress * f-f) - (B / Bmax) ^ 0.25)
+
+
+    ;; growth and death
+    ifelse gr <= 0 or gr <= ( (B ^ 0.75) * 0.05 )
+    [ set plant-dead true ]
+    [ set B B + gr
+      set rad ( B ^ ( 3 / 8 ) ) * ( PI ^ ( -1 / 2 ) ) ]
+  ]
+
+  if TRUE
+  [ set size rad * size-factor * 2 ]
+
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;  decompose  ;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to Remove_dead_plant
+
+ ifelse Remove_dead_plant?
+ [ set number-dead number-dead + 1
+   die ]
+ [ set color yellow
+   set B B ]
+ if TRUE
+ [ set size rad * size-factor * 2 ]
+
+end
+
+
+
+
+to hexagonal
+  ifelse y-hex > world-height
+  [ show "Remainder!"  ]
+  [
+    setxy x-hex y-offset ;install at the prepared spot
+    ;prepare the next one...
+    set x-hex x-hex + spacingx
+    ifelse y-offset = y-hex
+    [  set y-offset y-offset + spacingy ]
+    [  set y-offset y-hex ]
+
+    if x-hex > world-width
+    [    set x-hex spacingx / 2
+         set y-hex y-hex + 2 * spacingy
+         set y-offset y-hex
+    ]
+  ]
+end
+
+to-report factor [n]  ;; return the smallest integer divider of n larger than its square root (translated directly from Jacob Weiner's code)
+  let root floor(sqrt(n))
+  while [(n / root) < root]
+  [
+   set root root + 1
+  ]
+  report root
+end
